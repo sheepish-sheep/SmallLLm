@@ -1,0 +1,1 @@
+Narrator: The castle gates opened, <hl>REPLACE_ME</hl> and the rain began.

@@ -1,0 +1,47 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Model checkpoints and logs (large files)
+log/
+*.pt
+*.pth
+*.ckpt
+
+# Training data shards (large files)
+edu_fineweb10B/
+hellaswag/
+training_data/
+
+# VN scraping working data (may contain copyrighted assets)
+EncoderAndMoreInput/VN_Scraping/raw_data/
+EncoderAndMoreInput/VN_Scraping/cleaned/
+EncoderAndMoreInput/VN_Scraping/extracted/
+EncoderAndMoreInput/VN_Scraping/output/
+
+# Output directories (generated)
+EncoderAndMoreInput/VN_Pipeline/out/
+
+# Voice clone outputs
+Basic AI Voice Clone/audio_output/
+Basic AI Voice Clone/models/
+Basic AI Voice Clone/venv/
+
+# Misc
+*.log
+.DS_Store
+Thumbs.db

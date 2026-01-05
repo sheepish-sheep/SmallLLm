@@ -1,0 +1,8 @@
+# Minimal dependencies for VN scraper
+# Install with: pip install -r requirements.txt
+
+# Basic dependencies (Python standard library usually sufficient)
+# Add these only if needed:
+# chardet  # For encoding detection
+# struct2  # Already in stdlib, but listed for reference
+

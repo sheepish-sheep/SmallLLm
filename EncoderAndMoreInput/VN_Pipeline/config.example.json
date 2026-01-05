@@ -1,0 +1,15 @@
+{
+  "vn_cleaned_path": "training_data/vn/cleaned_binary_dialogue.txt",
+  "base_checkpoint_path": "log/model_19073.pt",
+  "finetune_output_dir": "EncoderAndMoreInput/VN_Pipeline/out/finetune",
+  "seq2seq_output_dir": "EncoderAndMoreInput/VN_Pipeline/out/seq2seq",
+  "highlight_start_token": "<hl>",
+  "highlight_end_token": "</hl>",
+  "max_seq_len": 512,
+  "batch_size": 8,
+  "learning_rate": 5e-5,
+  "num_epochs": 3,
+  "voice_model_path": "path/to/your/voice/model",
+  "voice_output_dir": "EncoderAndMoreInput/VN_Pipeline/out/audio",
+  "sample_rate_hz": 22050
+}
