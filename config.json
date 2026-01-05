@@ -27,7 +27,7 @@
   "highlight_end_token": "</hl>",
   "max_seq_len": 512,
   "finetune_max_steps": 6000,
-  "batch_size": 32,
+  "batch_size": 8,
   "learning_rate": 1e-05,
   "finetune_val_steps": 10,
   "num_epochs": 3,
