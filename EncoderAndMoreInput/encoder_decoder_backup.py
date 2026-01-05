@@ -40,9 +40,25 @@ class CrossAttention(nn.Module):
         self.c_attn_q = nn.Linear(config.n_embd, config.n_embd)
         self.c_attn_kv = nn.Linear(config.n_embd, 2 * config.n_embd)
         self.c_proj = nn.Linear(config.n_embd, config.n_embd)
-        self.c_proj.NANOGPT_SCALE_INIT = 1
+        # NOTE: Removed NANOGPT_SCALE_INIT to give cross-attention stronger signal
+        # This is critical - with scale init, cross-attention output is ~0.004 std
+        # which gets overwhelmed by self-attention and MLP in residual stream
         self.n_head = config.n_head
         self.n_embd = config.n_embd
+        
+        # Initialize cross-attention to be "louder" so it actually contributes
+        self._init_cross_attn_weights()
+    
+    def _init_cross_attn_weights(self):
+        """Initialize cross-attention with larger weights so it's not overwhelmed."""
+        # Standard init but with slightly larger std for c_proj
+        nn.init.normal_(self.c_attn_q.weight, std=0.02)
+        nn.init.zeros_(self.c_attn_q.bias)
+        nn.init.normal_(self.c_attn_kv.weight, std=0.02)
+        nn.init.zeros_(self.c_attn_kv.bias)
+        # c_proj with FULL std=0.02 (not scaled down)
+        nn.init.normal_(self.c_proj.weight, std=0.02)
+        nn.init.zeros_(self.c_proj.bias)
 
     def forward(self, decoder_x, encoder_output):
         B_dec, T_dec, C = decoder_x.size()

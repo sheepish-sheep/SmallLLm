@@ -217,7 +217,10 @@ class Seq2SeqDataLoader:
         self.shuffle = shuffle
         self.enc = build_hl_encoding()
         self.pad_id = self.enc.eot_token
-        self.bos_id = self.enc.eot_token
+        # Use a DIFFERENT token for BOS to distinguish from padding
+        # Token 50256 is the original GPT-2 EOT, 50257/50258 are <hl>/</hl>
+        # Use a high token that won't conflict (maps to rare token in vocab)
+        self.bos_id = 50259  # Dedicated BOS token
         
         # Load and tokenize all pairs once
         self.pairs = self._load_pairs()
@@ -391,6 +394,8 @@ def train_seq2seq_loop(
         )
         optimizer.zero_grad()
         loss.backward()
+        # Gradient clipping to prevent exploding gradients
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         scheduler.step()
         train_non_pad = int((dec_out != pad_id).sum().item())

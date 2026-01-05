@@ -63,7 +63,7 @@ def generate_replacement(
         source_tokens = source_tokens[-model.config.block_size:]
     enc_in = torch.tensor(source_tokens, dtype=torch.long, device=device).unsqueeze(0)
 
-    bos_id = enc.eot_token
+    bos_id = 50259  # Must match training BOS token
     eos_id = enc.eot_token
     dec_tokens = [bos_id]
 
