@@ -140,6 +140,10 @@ def resolve_vn_init_checkpoint(config: dict) -> Path | None:
         finetune_dir = Path(finetune_dir)
         candidates.append(finetune_dir / "best_checkpoint.pt")
         candidates.extend(sorted(finetune_dir.glob("run_*/best_checkpoint.pt")))
+    # Also check base GPT checkpoint as fallback
+    base_path = config.get("base_checkpoint_path")
+    if base_path:
+        candidates.append(Path(base_path))
     for path in candidates:
         if not path.is_absolute():
             path = repo_root / path
