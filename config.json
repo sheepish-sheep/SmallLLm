@@ -20,7 +20,7 @@
   "seq2seq_val_interval": 100,
   "seq2seq_save_interval": 500,
   "seq2seq_learning_rate": 3e-04,
-  "seq2seq_train_from_scratch": true,
+  "seq2seq_train_from_scratch": false,
   "seq2seq_force_vn_init": false,
   "seq2seq_resume_path": "",
   "vocab_size": 50304,
