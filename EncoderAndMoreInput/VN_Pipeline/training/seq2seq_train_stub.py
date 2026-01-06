@@ -153,25 +153,32 @@ def resolve_vn_init_checkpoint(config: dict) -> Path | None:
 
 
 def load_gpt_state_dict(checkpoint_path: Path) -> dict:
-    # Pre-load train_chunni module so GPTConfig is available for unpickling
+    # Pre-load train_chunni module and register it so torch can unpickle GPTConfig
     train_chunni = load_train_chunni_module()
-    # Register GPTConfig in global namespace for torch unpickling
-    import builtins
-    old_gptconfig = getattr(builtins, 'GPTConfig', None)
-    builtins.GPTConfig = train_chunni.GPTConfig
+    
+    # Register the module under the name torch expects for unpickling
+    sys.modules['train_chunni'] = train_chunni
+    sys.modules['__main__'].GPTConfig = train_chunni.GPTConfig
     
     try:
+        state = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+    except Exception:
         try:
-            state = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
-        except Exception:
-            # weights_only=False allows unpickling GPTConfig
             state = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    finally:
-        # Restore original state
-        if old_gptconfig is None:
-            delattr(builtins, 'GPTConfig')
-        else:
-            builtins.GPTConfig = old_gptconfig
+        except Exception as e:
+            # Last resort: load with pickle module override
+            import pickle
+            class GPTConfigUnpickler(pickle.Unpickler):
+                def find_class(self, module, name):
+                    if name == 'GPTConfig':
+                        return train_chunni.GPTConfig
+                    return super().find_class(module, name)
+            
+            with open(checkpoint_path, 'rb') as f:
+                state = torch.load(f, map_location="cpu", pickle_module=type('', (), {
+                    'Unpickler': GPTConfigUnpickler,
+                    'load': lambda f: GPTConfigUnpickler(f).load()
+                })())
     
     if isinstance(state, dict) and "model" in state:
         state = state["model"]
