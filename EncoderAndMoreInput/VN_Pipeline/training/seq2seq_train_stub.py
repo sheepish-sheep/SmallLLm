@@ -153,15 +153,26 @@ def resolve_vn_init_checkpoint(config: dict) -> Path | None:
 
 
 def load_gpt_state_dict(checkpoint_path: Path) -> dict:
+    # Pre-load train_chunni module so GPTConfig is available for unpickling
+    train_chunni = load_train_chunni_module()
+    # Register GPTConfig in global namespace for torch unpickling
+    import builtins
+    old_gptconfig = getattr(builtins, 'GPTConfig', None)
+    builtins.GPTConfig = train_chunni.GPTConfig
+    
     try:
-        state = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
-    except Exception:
         try:
-            train_chunni = load_train_chunni_module()
-            with torch.serialization.safe_globals([train_chunni.GPTConfig]):
-                state = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+            state = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
         except Exception:
+            # weights_only=False allows unpickling GPTConfig
             state = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    finally:
+        # Restore original state
+        if old_gptconfig is None:
+            delattr(builtins, 'GPTConfig')
+        else:
+            builtins.GPTConfig = old_gptconfig
+    
     if isinstance(state, dict) and "model" in state:
         state = state["model"]
     if isinstance(state, dict) and all(k.startswith("module.") for k in state.keys()):
