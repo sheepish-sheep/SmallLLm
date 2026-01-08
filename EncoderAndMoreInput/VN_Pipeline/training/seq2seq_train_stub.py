@@ -126,6 +126,27 @@ def load_seq2seq_best_val(checkpoint_path: Path) -> float | None:
     return None
 
 
+def load_seq2seq_step(checkpoint_path: Path) -> int | None:
+    """Load step number from checkpoint dict, or extract from filename."""
+    try:
+        state = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+    except Exception:
+        state = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    # Try to get step from checkpoint dict first
+    if isinstance(state, dict):
+        step = state.get("step")
+        if step is not None:
+            try:
+                return int(step)
+            except (TypeError, ValueError):
+                pass
+    # Fall back to extracting from filename
+    match = re.search(r"model_(\d+)\.pt$", str(checkpoint_path))
+    if match:
+        return int(match.group(1))
+    return None
+
+
 def resolve_vn_init_checkpoint(config: dict) -> Path | None:
     repo_root = Path(__file__).resolve().parents[3]
     candidates = []
@@ -499,11 +520,11 @@ def main() -> None:
                 print(f"Resuming seq2seq from: {resume_path}", flush=True)
                 if best_val_init is not None:
                     print(f"Loaded best val loss: {best_val_init:.6f}", flush=True)
-                # Extract step number from checkpoint filename (e.g., model_01500.pt -> 1500)
-                match = re.search(r"model_(\d+)\.pt$", str(resume_path))
-                if match:
-                    start_step = int(match.group(1))
-                    print(f"Starting from step {start_step}", flush=True)
+                # Load step from checkpoint dict or filename
+                loaded_step = load_seq2seq_step(resume_path)
+                if loaded_step is not None:
+                    start_step = loaded_step
+                    print(f"Resuming from step {start_step}", flush=True)
             except Exception as e:
                 print(f"Seq2seq resume failed ({e}); training from init.", flush=True)
     pairs_path = config.get("pairs_path")
