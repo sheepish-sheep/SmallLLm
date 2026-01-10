@@ -39,7 +39,7 @@ def build_copy_replace_pairs(
     highlight_start: str,
     highlight_end: str,
     *,
-    span_len: int = 5,
+    span_len: int = 2,  # Now means number of WORDS to highlight (1-3)
     min_line_len: int = 20,
     max_line_len: int = 160,
     source_prefix: str = "",
@@ -50,19 +50,20 @@ def build_copy_replace_pairs(
     """
     Create (source, target) pairs for seq2seq training.
 
-    For each line, pick a span to wrap with highlight tags.
-    - Source: the line with a span wrapped in <hl>...</hl>
+    For each line, pick WHOLE WORDS to wrap with highlight tags.
+    - Source: the line with word(s) wrapped in <hl>...</hl>
     - Target: the original line (model learns to "restore" the highlighted span)
 
     Args:
-        randomize_position: If True, pick random span positions for variety.
+        span_len: Number of consecutive words to highlight (1-3 recommended).
+        randomize_position: If True, pick random word positions for variety.
                            If False, always use middle (easier to debug).
         seed: Random seed for reproducible results when randomize_position=True.
 
     Notes:
     - Skips lines outside [min_line_len, max_line_len] range.
     - Avoids inserting tags inside existing markup (lines with < or > are skipped).
-    - Word-boundary aware: tries to align spans to word boundaries when possible.
+    - Guarantees WHOLE WORDS are highlighted (no mid-word splits).
     """
     if randomize_position:
         random.seed(seed)
@@ -71,40 +72,44 @@ def build_copy_replace_pairs(
     for line in lines:
         if len(line) < min_line_len or len(line) > max_line_len:
             continue
-        if len(line) < span_len:
-            continue
         # Skip lines that already contain markup
         if "<" in line or ">" in line:
             continue
 
-        max_start = len(line) - span_len
+        # Split into words while preserving spacing
+        words = line.split()
+        if len(words) < 2:
+            continue
+        
+        # Determine how many words to highlight (1 to span_len, but not more than available)
+        num_words = min(span_len, len(words) - 1)
+        if num_words < 1:
+            continue
+        
+        # Pick starting word index
+        max_start_idx = len(words) - num_words
         if randomize_position:
-            start = random.randint(0, max_start)
+            start_idx = random.randint(0, max_start_idx)
         else:
             # Deterministic: use middle position
-            start = max(0, (len(line) - span_len) // 2)
-
-        end = start + span_len
-
-        # Try to align to word boundaries (expand to include full words)
-        # Find word start (go back to space or start of line)
-        while start > 0 and line[start - 1] not in " \t":
-            start -= 1
-        # Find word end (go forward to space or end of line)
-        while end < len(line) and line[end] not in " \t":
-            end += 1
-
-        # Skip if span is now too short or too long
-        actual_span_len = end - start
-        if actual_span_len < 2 or actual_span_len > span_len * 3:
-            # Fall back to original positions
-            if randomize_position:
-                start = random.randint(0, max_start)
-            else:
-                start = max(0, (len(line) - span_len) // 2)
-            end = start + span_len
-
-        source = line[:start] + highlight_start + line[start:end] + highlight_end + line[end:]
+            start_idx = max_start_idx // 2
+        
+        end_idx = start_idx + num_words
+        
+        # Build source with highlighted words
+        before = " ".join(words[:start_idx])
+        highlighted = " ".join(words[start_idx:end_idx])
+        after = " ".join(words[end_idx:])
+        
+        # Reconstruct with proper spacing
+        parts = []
+        if before:
+            parts.append(before)
+        parts.append(highlight_start + highlighted + highlight_end)
+        if after:
+            parts.append(after)
+        
+        source = " ".join(parts)
         source = f"{source_prefix}{source}{source_suffix}"
         pairs.append((source, line))
 
