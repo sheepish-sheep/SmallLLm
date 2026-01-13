@@ -1,4 +1,5 @@
-# GPT Architecture Components Explained
+modal volume ls chuni-checkpoints
+  modal volume ls chuni-checkpoints seq2seq/# GPT Architecture Components Explained
 
 This document explains the MLP, Block, GPTConfig, and GPT classes that form a complete GPT (Generative Pre-trained Transformer) model.
 

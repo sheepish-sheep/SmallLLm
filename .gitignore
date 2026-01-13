@@ -45,3 +45,15 @@ Basic AI Voice Clone/venv/
 *.log
 .DS_Store
 Thumbs.db
+
+# API keys and secrets
+api_key.txt
+*.env
+
+# Claude Code temp files
+.claude/
+tmpclaude-*-cwd
+nul
+
+# Coqui TTS cache (large model files)
+tts/

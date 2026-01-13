@@ -4,9 +4,10 @@ Orchestration stub for the full VN pipeline.
 Pipeline stages:
 1. Data prep: Create copy/replace pairs from VN dialogue
 2. Fine-tune: Fine-tune base model on VN text
-3. Seq2seq train: Train encoder-decoder for highlight replacement
+3. Seq2seq train: Train encoder-decoder for paraphrasing
 4. Seq2seq eval: Evaluate model quality
-5. Voice: Synthesize audio from generated text
+5. Voice: Synthesize audio from text
+6. Rewrite+Voice: Full pipeline - paraphrase text then synthesize speech
 """
 
 import json
@@ -46,9 +47,12 @@ def main(stages: list[str] = None) -> None:
     seq2seq_eval = importlib.import_module("EncoderAndMoreInput.VN_Pipeline.eval.seq2seq_eval_stub")
     voice = importlib.import_module("EncoderAndMoreInput.VN_Pipeline.voice_stub")
 
-    all_stages = ["data_prep", "finetune", "seq2seq", "eval", "voice"]
+    # Training stages (run by default with "all")
+    training_stages = ["data_prep", "finetune", "seq2seq", "eval", "voice"]
+    # Inference stage (run explicitly)
+    inference_stages = ["rewrite_voice"]
     if stages is None:
-        stages = all_stages
+        stages = training_stages
     
     if "data_prep" in stages:
         print("\n=== Stage 1: Data Preparation ===")
@@ -74,7 +78,24 @@ def main(stages: list[str] = None) -> None:
                 voice.speak_text(text, config)
         else:
             voice.main()
-    
+
+    if "rewrite_voice" in stages:
+        print("\n=== Stage 6: Rewrite + Voice (Full Pipeline) ===")
+        from EncoderAndMoreInput.VN_Pipeline.inference.rewrite_and_speak import (
+            rewrite_and_speak,
+            batch_rewrite_and_speak,
+        )
+        voice_texts = config.get("pipeline_voice_texts")
+        if voice_texts:
+            results = batch_rewrite_and_speak(voice_texts)
+            print(f"\nProcessed {len(results)} texts")
+            for r in results:
+                print(f"  {r['input'][:40]}... -> {r['audio_path']}")
+        else:
+            # Interactive mode
+            print("No pipeline_voice_texts in config. Use interactive mode:")
+            print("  python -m EncoderAndMoreInput.VN_Pipeline.inference.rewrite_and_speak -i")
+
     print("\n=== Pipeline complete ===")
 
 
@@ -85,13 +106,17 @@ def cli() -> None:
     parser.add_argument(
         "--stages",
         nargs="+",
-        choices=["data_prep", "finetune", "seq2seq", "eval", "voice", "all"],
+        choices=["data_prep", "finetune", "seq2seq", "eval", "voice", "rewrite_voice", "all"],
         default=["all"],
         help="Stages to run (default: all)"
     )
     args = parser.parse_args()
-    
-    stages = None if "all" in args.stages else args.stages
+
+    # "all" doesn't include rewrite_voice by default (it's an inference stage)
+    if "all" in args.stages:
+        stages = ["data_prep", "finetune", "seq2seq", "eval", "voice"]
+    else:
+        stages = args.stages
     main(stages)
 
 

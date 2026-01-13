@@ -55,10 +55,9 @@ def generate_replacement(
     source_prefix: str,
     source_suffix: str,
 ) -> str:
-    if "<hl>" not in text:
-        text = f"<hl>{text}</hl>"
+    # No <hl> tags needed - we're doing full sentence replacement
     text = f"{source_prefix}{text}{source_suffix}"
-    source_tokens = enc.encode(text, allowed_special={"<hl>", "</hl>"})
+    source_tokens = enc.encode(text)
     if len(source_tokens) > model.config.block_size:
         source_tokens = source_tokens[-model.config.block_size:]
     enc_in = torch.tensor(source_tokens, dtype=torch.long, device=device).unsqueeze(0)
@@ -86,7 +85,7 @@ def generate_replacement(
                 break
 
     decoded = enc.decode(dec_tokens[1:])  # drop BOS
-    return decoded.replace("<hl>", "").replace("</hl>", "").strip()
+    return decoded.strip()
 
 
 class Seq2SeqRewriter:
@@ -139,9 +138,9 @@ class Seq2SeqRewriter:
         max_len = int(self.config.get("seq2seq_max_gen_len", 128))
         temperature = float(self.config.get("seq2seq_temperature", 0.8))
         top_k = int(self.config.get("seq2seq_top_k", 50))
-        source_for_len = text if "<hl>" in text else f"<hl>{text}</hl>"
-        source_for_len = f"{self.source_prefix}{source_for_len}{self.source_suffix}"
-        source_tokens = self.enc.encode(source_for_len, allowed_special={"<hl>", "</hl>"})
+        # No <hl> tags - full sentence replacement
+        source_for_len = f"{self.source_prefix}{text}{self.source_suffix}"
+        source_tokens = self.enc.encode(source_for_len)
         capped_len = max(self.min_gen_len, int(len(source_tokens) * self.len_ratio))
         max_len = min(max_len, capped_len)
         return generate_replacement(
