@@ -40,6 +40,7 @@ EncoderAndMoreInput/VN_Pipeline/out/
 Basic AI Voice Clone/audio_output/
 Basic AI Voice Clone/models/
 Basic AI Voice Clone/venv/
+Basic AI Voice Clone/voice_samples/
 
 # Misc
 *.log
