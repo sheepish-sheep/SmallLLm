@@ -8,20 +8,16 @@ from pathlib import Path
 from typing import Any
 
 
-# Schema: (key, type, required, default, description)
 CONFIG_SCHEMA = [
-    # Data paths
     ("vn_cleaned_path", str, True, None, "Path to cleaned VN dialogue text file"),
     ("vn_shard_dir", str, True, None, "Directory containing train_*.npy and val_*.npy shards"),
     ("base_checkpoint_path", str, True, None, "Path to base model checkpoint (e.g., log/model_04999.pt)"),
     
-    # Fine-tuning
     ("finetune_output_dir", str, True, None, "Directory to save fine-tuned checkpoints"),
     ("finetune_resume_path", str, False, "", "Resume fine-tuning from this checkpoint"),
     ("finetune_max_steps", int, False, 6000, "Maximum fine-tuning steps"),
     ("finetune_val_steps", int, False, 10, "Validation steps per eval"),
     
-    # Seq2seq
     ("seq2seq_output_dir", str, True, None, "Directory for seq2seq outputs (checkpoints, data)"),
     ("seq2seq_checkpoint_path", str, False, None, "Path to seq2seq checkpoint for inference"),
     ("seq2seq_resume_path", str, False, "", "Resume seq2seq training from checkpoint"),
@@ -42,18 +38,15 @@ CONFIG_SCHEMA = [
     ("seq2seq_learning_rate", float, False, 5e-5, "Seq2seq learning rate"),
     ("seq2seq_force_vn_init", bool, False, True, "Force init from VN checkpoint (ignore resume)"),
     
-    # Tokenizer
     ("highlight_start_token", str, False, "<hl>", "Highlight start token"),
     ("highlight_end_token", str, False, "</hl>", "Highlight end token"),
     ("vocab_size", int, False, 50304, "Vocabulary size"),
     
-    # Training
     ("max_seq_len", int, False, 512, "Maximum sequence length"),
     ("batch_size", int, False, 8, "Training batch size"),
     ("learning_rate", float, False, 1e-5, "Fine-tuning learning rate"),
     ("num_epochs", int, False, 3, "Number of epochs (unused, max_steps is preferred)"),
     
-    # Voice
     ("voice_clone_root", str, False, "Basic AI Voice Clone", "Root directory for voice cloner"),
     ("voice_samples_dir", str, False, None, "Directory with voice sample audio files"),
     ("voice_output_dir", str, False, None, "Directory to save generated audio"),
@@ -89,13 +82,10 @@ def validate_config(config: dict, required_only: bool = False) -> list[str]:
         
         value = config[key]
         
-        # Skip type check for None values on optional fields
         if value is None and not required:
             continue
         
-        # Type checking
         if expected_type == float and isinstance(value, int):
-            # Allow int for float fields
             continue
         if not isinstance(value, expected_type):
             errors.append(
@@ -133,7 +123,6 @@ def get_config_docs() -> str:
     }
     
     for key, expected_type, required, default, description in CONFIG_SCHEMA:
-        # Determine section
         section = None
         for prefix, sec_name in sections.items():
             if key.startswith(prefix):
@@ -169,6 +158,5 @@ def apply_defaults(config: dict) -> dict:
 
 
 if __name__ == "__main__":
-    # Print documentation
     print(get_config_docs())
 

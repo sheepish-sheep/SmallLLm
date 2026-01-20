@@ -1,6 +1,4 @@
 """
-Orchestration stub for the full VN pipeline.
-
 Pipeline stages:
 1. Data prep: Create copy/replace pairs from VN dialogue
 2. Fine-tune: Fine-tune base model on VN text

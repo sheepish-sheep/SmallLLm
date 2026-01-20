@@ -54,6 +54,7 @@ def generate_replacement(
     device: str,
     source_prefix: str,
     source_suffix: str,
+    repetition_penalty: float = 1.2,
 ) -> str:
     # No <hl> tags needed - we're doing full sentence replacement
     text = f"{source_prefix}{text}{source_suffix}"
@@ -71,7 +72,17 @@ def generate_replacement(
         for _ in range(max_len):
             dec_in = torch.tensor(dec_tokens, dtype=torch.long, device=device).unsqueeze(0)
             logits, _ = model(enc_in, dec_in)
-            logits = logits[:, -1, :] / max(temperature, 1e-6)
+            logits = logits[:, -1, :]
+
+            # Apply repetition penalty
+            if repetition_penalty != 1.0:
+                for token_id in set(dec_tokens):
+                    if logits[0, token_id] > 0:
+                        logits[0, token_id] /= repetition_penalty
+                    else:
+                        logits[0, token_id] *= repetition_penalty
+
+            logits = logits / max(temperature, 1e-6)
             if top_k and top_k > 0:
                 values, indices = torch.topk(logits, top_k)
                 probs = torch.softmax(values, dim=-1)
@@ -118,6 +129,7 @@ class Seq2SeqRewriter:
         self.source_suffix = self.config.get("seq2seq_source_suffix", "")
         self.len_ratio = float(self.config.get("seq2seq_len_ratio", 1.1))
         self.min_gen_len = int(self.config.get("seq2seq_min_gen_len", 8))
+        self.repetition_penalty = float(self.config.get("seq2seq_repetition_penalty", 1.2))
 
         self.model = load_seq2seq_model(self.config, repo_root)
         checkpoint_path = self.config.get("seq2seq_checkpoint_path")
@@ -153,4 +165,5 @@ class Seq2SeqRewriter:
             self.device,
             self.source_prefix,
             self.source_suffix,
+            self.repetition_penalty,
         )

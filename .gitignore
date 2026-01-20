@@ -55,8 +55,10 @@ api_key.txt
 tmpclaude-*-cwd
 nul
 
-# Documentation (generated)
+# Documentation (generated/personal)
 docs/
 
 # Coqui TTS cache (large model files)
 tts/
+
+voice_samples/

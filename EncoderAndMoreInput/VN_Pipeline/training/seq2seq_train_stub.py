@@ -55,7 +55,6 @@ def load_seq2seq_model() -> Any:
     cfg = train_chunni.GPTConfig(vocab_size=vocab_size, block_size=block_size)
     model = EncoderDecoder(cfg, train_chunni.CausalSelfAttention)
     
-    # Option to train from scratch (no pretrained init)
     if config.get("seq2seq_train_from_scratch", False):
         print("Training seq2seq from scratch (random init).", flush=True)
         return model
@@ -132,7 +131,6 @@ def load_seq2seq_step(checkpoint_path: Path) -> int | None:
         state = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     except Exception:
         state = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    # Try to get step from checkpoint dict first
     if isinstance(state, dict):
         step = state.get("step")
         if step is not None:
@@ -140,7 +138,6 @@ def load_seq2seq_step(checkpoint_path: Path) -> int | None:
                 return int(step)
             except (TypeError, ValueError):
                 pass
-    # Fall back to extracting from filename
     match = re.search(r"model_(\d+)\.pt$", str(checkpoint_path))
     if match:
         return int(match.group(1))
@@ -161,7 +158,6 @@ def resolve_vn_init_checkpoint(config: dict) -> Path | None:
         finetune_dir = Path(finetune_dir)
         candidates.append(finetune_dir / "best_checkpoint.pt")
         candidates.extend(sorted(finetune_dir.glob("run_*/best_checkpoint.pt")))
-    # Also check base GPT checkpoint as fallback
     base_path = config.get("base_checkpoint_path")
     if base_path:
         candidates.append(Path(base_path))
@@ -174,10 +170,8 @@ def resolve_vn_init_checkpoint(config: dict) -> Path | None:
 
 
 def load_gpt_state_dict(checkpoint_path: Path) -> dict:
-    # Pre-load train_chunni module and register it so torch can unpickle GPTConfig
     train_chunni = load_train_chunni_module()
     
-    # Register the module under the name torch expects for unpickling
     sys.modules['train_chunni'] = train_chunni
     sys.modules['__main__'].GPTConfig = train_chunni.GPTConfig
     
@@ -187,7 +181,6 @@ def load_gpt_state_dict(checkpoint_path: Path) -> dict:
         try:
             state = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         except Exception as e:
-            # Last resort: load with pickle module override
             import pickle
             class GPTConfigUnpickler(pickle.Unpickler):
                 def find_class(self, module, name):
@@ -260,12 +253,8 @@ class Seq2SeqDataLoader:
         self.shuffle = shuffle
         self.enc = build_hl_encoding()
         self.pad_id = self.enc.eot_token
-        # Use a DIFFERENT token for BOS to distinguish from padding
-        # Token 50256 is the original GPT-2 EOT, 50257/50258 are <hl>/</hl>
-        # Use a high token that won't conflict (maps to rare token in vocab)
-        self.bos_id = 50259  # Dedicated BOS token
+        self.bos_id = 50259  
         
-        # Load and tokenize all pairs once
         self.pairs = self._load_pairs()
         self._indices = list(range(len(self.pairs)))
         self._pos = 0
@@ -391,6 +380,7 @@ def train_seq2seq_loop(
     best_val_init: float | None,
     learning_rate: float,
     start_step: int = 0,
+    early_stopping_patience: int = 0,
 ) -> None:
     """
     Implement encoder-decoder training loop with teacher forcing.
@@ -404,7 +394,6 @@ def train_seq2seq_loop(
     pad_id = enc.eot_token
     os.makedirs(output_dir, exist_ok=True)
     
-    # Initialize metrics CSV for plotting
     metrics_csv_path = os.path.join(output_dir, "metrics.csv")
     if not os.path.exists(metrics_csv_path):
         with open(metrics_csv_path, "w") as f:
@@ -416,13 +405,16 @@ def train_seq2seq_loop(
     if start_step > 0:
         print(f"Resuming from step {start_step}", flush=True)
     best_val_loss = best_val_init if best_val_init is not None else float("inf")
+    steps_without_improvement = 0
+    last_best_step = start_step
+    if early_stopping_patience > 0:
+        print(f"Early stopping enabled: patience = {early_stopping_patience} steps", flush=True)
     val_loader = None
     if val_pairs_path:
         val_loader = build_seq2seq_dataloader(val_pairs_path, batch_size, seq_len, shuffle=False)
     val_interval = max(1, val_interval)
     save_interval = max(1, save_interval)
     
-    # Use next_batch() for infinite iteration through training data
     while step < max_steps:
         enc_in, dec_in, dec_out = dataloader.next_batch()
         model.train()
@@ -437,7 +429,6 @@ def train_seq2seq_loop(
         )
         optimizer.zero_grad()
         loss.backward()
-        # Gradient clipping to prevent exploding gradients
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         scheduler.step()
@@ -475,7 +466,6 @@ def train_seq2seq_loop(
                 f"Train non-pad: {train_non_pad} | Val non-pad avg: {val_non_pad_avg:.1f}",
                 flush=True,
             )
-            # Log to CSV for plotting
             from datetime import datetime
             with open(metrics_csv_path, "a") as f:
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -483,12 +473,26 @@ def train_seq2seq_loop(
             
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
+                steps_without_improvement = 0
+                last_best_step = step
                 best_checkpoint = {
                     "model": model.state_dict(),
                     "step": step,
                     "val_loss": val_loss,
                 }
                 torch.save(best_checkpoint, os.path.join(output_dir, "best_checkpoint.pt"))
+                print(f"  -> New best val loss: {val_loss:.6f}", flush=True)
+            else:
+                steps_without_improvement += val_interval
+                if early_stopping_patience > 0:
+                    print(f"  -> No improvement for {steps_without_improvement} steps (patience: {early_stopping_patience})", flush=True)
+
+            # Early stopping check
+            if early_stopping_patience > 0 and steps_without_improvement >= early_stopping_patience:
+                print(f"\nEarly stopping triggered! No improvement for {steps_without_improvement} steps.", flush=True)
+                print(f"Best val loss: {best_val_loss:.6f} at step {last_best_step}", flush=True)
+                torch.save(model.state_dict(), os.path.join(output_dir, "model_final.pt"))
+                return
         if step % save_interval == 0:
             torch.save(model.state_dict(), os.path.join(output_dir, f"model_{step:05d}.pt"))
         step += 1
@@ -536,6 +540,7 @@ def main() -> None:
     val_interval = int(config.get("seq2seq_val_interval", 50))
     save_interval = int(config.get("seq2seq_save_interval", 250))
     learning_rate = float(config.get("seq2seq_learning_rate", 5e-5))
+    early_stopping_patience = int(config.get("seq2seq_early_stopping_patience", 0))
     val_pairs_path = config.get("val_pairs_path")
     if not val_pairs_path:
         val_pairs_path = str(Path(pairs_path).with_name("val.jsonl"))
@@ -554,6 +559,7 @@ def main() -> None:
         best_val_init,
         learning_rate,
         start_step,
+        early_stopping_patience,
     )
     print(f"Model saved to {os.path.join(config['seq2seq_output_dir'], 'model_final.pt')}")
 
