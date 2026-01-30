@@ -1,23 +1,3 @@
-"""
-Output filtering for seq2seq paraphrase model.
-
-This module provides filters to reject low-quality outputs from the paraphrase model.
-Each filter returns True if the output PASSES (is good), False if it should be REJECTED.
-
-Usage:
-    from EncoderAndMoreInput.VN_Pipeline.utils.output_filter import OutputFilter
-
-    filter = OutputFilter()
-    result = filter.filter("I love you.", "I adore you greatly.")
-
-    if result.passed:
-        print(f"Good output: {result.output}")
-    else:
-        print(f"Rejected: {result.rejection_reasons}")
-
-To customize: Edit the filter functions or add your own in the CUSTOM FILTERS section.
-"""
-
 import re
 from dataclasses import dataclass, field
 from typing import Callable
@@ -155,24 +135,33 @@ def filter_custom_blocklist(input_text: str, output: str) -> tuple[bool, str]:
 
 def filter_grammar_check(input_text: str, output: str) -> tuple[bool, str]:
     """
-    STUB: Check grammar quality.
-
-    TODO: Implement using a grammar checker library like:
-    - language_tool_python
-    - grammarbot
-    - Or a simple rule-based approach
-
-    Example with language_tool_python:
-        import language_tool_python
-        tool = language_tool_python.LanguageTool('en-US')
-        matches = tool.check(output)
-        if len(matches) > threshold:
-            return False, f"Grammar errors: {len(matches)}"
-
-    Returns:
-        (passed, reason)
+    Basic grammar check using simple rules.
+    Catches common errors without external dependencies.
     """
-    # Currently passes everything - implement your own logic
+    # Common grammar error patterns
+    grammar_errors = [
+        (r'(?<!\w)i\s+[a-z]', "Lowercase 'i' as pronoun"),  # "i am" instead of "I am"
+        (r'\b(is|are|was|were)\s+(is|are|was|were)\b', "Double verb"),  # "is is"
+        (r'\ba\s+[aeiou]\w+', "Should be 'an' before vowel"),  # "a apple"
+        (r'\ban\s+[bcdfghjklmnpqrstvwxyz]\w+', "Should be 'a' before consonant"),  # "an book"
+        (r'(\w)\1{3,}', "Letter repeated 4+ times"),  # "helllllo"
+        (r'\bI\s+(is|are|was|were)\b', "'I' with wrong verb"),  # "I is"
+        (r'\b(you|we|they)\s+(is|was)\b', "Plural with singular verb"),  # "you is"
+        (r'\b(he|she|it)\s+(are|were)\b', "Singular with plural verb"),  # "he are"
+        (r'(\b\w+\b)\s+\1\s+\1\b', "Word repeated 3+ times"),  # "the the the"
+    ]
+
+    for pattern, error_name in grammar_errors:
+        if re.search(pattern, output, re.IGNORECASE if 'capital' not in error_name.lower() else 0):
+            return False, f"Grammar: {error_name}"
+
+    # Check for broken/incomplete words at end
+    words = output.split()
+    if words:
+        last_word = re.sub(r'[^\w]', '', words[-1])
+        if len(last_word) == 1 and last_word.lower() not in ['i', 'a']:
+            return False, "Ends with single letter (cut off)"
+
     return True, ""
 
 
@@ -220,14 +209,14 @@ class OutputFilter:
 
     def __init__(self,
                  min_length: int = 5,
-                 max_length_ratio: float = 3.0,
+                 max_length_ratio: float = 2.0,
                  max_repetition: int = 3,
                  check_incomplete: bool = True,
                  check_nonsense: bool = True,
                  check_meaning: bool = True,
                  min_word_overlap: float = 0.1,
                  use_custom_blocklist: bool = True,
-                 use_grammar_check: bool = False,  # Disabled by default (stub)
+                 use_grammar_check: bool = True,  # Enabled - catches common grammar errors
                  use_semantic_check: bool = False,  # Disabled by default (stub)
                  ):
         """

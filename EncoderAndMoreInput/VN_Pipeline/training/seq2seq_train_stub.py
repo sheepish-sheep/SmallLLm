@@ -26,6 +26,10 @@ if repo_root_str not in sys.path:
 
 from EncoderAndMoreInput.encoder_decoder_backup import EncoderDecoder
 from EncoderAndMoreInput.VN_Pipeline.utils.specialtoken_hl import build_hl_encoding
+from EncoderAndMoreInput.VN_Pipeline.utils.output_filter import OutputFilter
+from EncoderAndMoreInput.VN_Pipeline.training.data_improvement import (
+    ImprovementConfig, run_improvement_pipeline, filter_candidates, select_best_candidate
+)
 
 def load_train_chunni_module() -> Any:
     repo_root = Path(__file__).resolve().parents[3]
@@ -40,12 +44,6 @@ def load_train_chunni_module() -> Any:
 
 
 def load_seq2seq_model() -> Any:
-    """
-    TODO: Instantiate EncoderDecoder with the same vocab and block size
-    as your fine-tuned language model.
-    - Optionally initialize weights from the fine-tuned LM.
-    - Keep vocab_size consistent (50304 if using GPT-2 + special tokens).
-    """
     config_path = Path(__file__).resolve().parents[3] / "config.json"
     with open(config_path, "r") as f:
         config = json.load(f)
@@ -126,7 +124,6 @@ def load_seq2seq_best_val(checkpoint_path: Path) -> float | None:
 
 
 def load_seq2seq_step(checkpoint_path: Path) -> int | None:
-    """Load step number from checkpoint dict, or extract from filename."""
     try:
         state = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     except Exception:
@@ -239,13 +236,6 @@ def init_seq2seq_from_gpt(model: EncoderDecoder, gpt_state: dict) -> bool:
     return True
 
 class Seq2SeqDataLoader:
-    """
-    Iterable dataloader for seq2seq training that supports multiple epochs.
-    
-    Unlike a generator, this class can be reset and iterated multiple times.
-    It also shuffles data each epoch for better training.
-    """
-    
     def __init__(self, pairs_path: str, batch_size: int, seq_len: int, shuffle: bool = True):
         self.pairs_path = self._resolve_path(pairs_path)
         self.batch_size = batch_size
@@ -273,7 +263,6 @@ class Seq2SeqDataLoader:
         raise FileNotFoundError(f"Pairs file not found: {pairs_file}")
     
     def _load_pairs(self) -> list:
-        """Load and tokenize all pairs from JSONL file."""
         pairs = []
         with open(self.pairs_path, "r", encoding="utf-8") as f:
             for line in f:
@@ -298,7 +287,6 @@ class Seq2SeqDataLoader:
         return tokens + [self.pad_id] * (length - len(tokens))
     
     def reset(self, shuffle: bool = None):
-        """Reset to beginning of data. Optionally shuffle."""
         self._pos = 0
         if shuffle is None:
             shuffle = self.shuffle
@@ -307,11 +295,9 @@ class Seq2SeqDataLoader:
             random.shuffle(self._indices)
     
     def __len__(self):
-        """Number of batches per epoch."""
         return len(self.pairs) // self.batch_size
     
     def __iter__(self):
-        """Iterate through all batches once (one epoch)."""
         self.reset()
         while self._pos + self.batch_size <= len(self.pairs):
             batch_enc = []
@@ -333,7 +319,6 @@ class Seq2SeqDataLoader:
             )
     
     def next_batch(self):
-        """Get next batch, wrapping around to start if exhausted (infinite iteration)."""
         if self._pos + self.batch_size > len(self.pairs):
             self.reset()
         batch_enc = []
@@ -356,12 +341,6 @@ class Seq2SeqDataLoader:
 
 
 def build_seq2seq_dataloader(pairs_path: str, batch_size: int, seq_len: int, shuffle: bool = True) -> Seq2SeqDataLoader:
-    """
-    Load (source, target) pairs and build encoder/decoder batches.
-    
-    Returns a Seq2SeqDataLoader that can be iterated multiple times (multiple epochs).
-    Use next_batch() for infinite iteration, or iterate directly for one epoch.
-    """
     return Seq2SeqDataLoader(pairs_path, batch_size, seq_len, shuffle=shuffle)
     
 
@@ -381,12 +360,12 @@ def train_seq2seq_loop(
     learning_rate: float,
     start_step: int = 0,
     early_stopping_patience: int = 0,
+    use_output_filter: bool = True,
+    output_filter_config: dict | None = None,
+    use_data_improvement: bool = False,
+    data_improvement_interval: int = 5000,
+    data_improvement_config: dict | None = None,
 ) -> None:
-    """
-    Implement encoder-decoder training loop with teacher forcing.
-    - Use cross-entropy on decoder outputs.
-    - Save checkpoints to output_dir.
-    """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}", flush=True)
     model.to(device)
@@ -402,6 +381,18 @@ def train_seq2seq_loop(
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max_steps, eta_min=1e-5)
     step = start_step
+    output_filter = None
+    if use_output_filter:
+        filter_cfg = output_filter_config or {}
+        output_filter = OutputFilter(
+            min_length=filter_cfg.get("min_length", 5),
+            max_length_ratio=filter_cfg.get("max_length_ratio", 2.0),
+            use_grammar_check=filter_cfg.get("check_grammar", True),
+        )
+        print("Output filter enabled for validation", flush=True)
+
+    if use_data_improvement:
+        print(f"Data improvement enabled (every {data_improvement_interval} steps)", flush=True)
     if start_step > 0:
         print(f"Resuming from step {start_step}", flush=True)
     best_val_loss = best_val_init if best_val_init is not None else float("inf")
@@ -455,6 +446,28 @@ def train_seq2seq_loop(
                     val_non_pad_total += int((val_dec_out != pad_id).sum().item())
             val_loss = val_loss_total / max(1, val_steps)
             val_non_pad_avg = val_non_pad_total / max(1, val_steps)
+            filter_pass_rate = None
+            if output_filter is not None and step % (val_interval * 10) == 0:
+                try:
+                    filter_passes = 0
+                    filter_total = min(10, val_steps)
+                    for _ in range(filter_total):
+                        val_enc_sample, val_dec_in_sample, val_dec_out_sample = val_loader.next_batch()
+                        with torch.no_grad():
+                            val_enc_sample = val_enc_sample.to(device)
+                            val_dec_in_sample = val_dec_in_sample.to(device)
+                            sample_logits, _ = model(val_enc_sample, val_dec_in_sample)
+                            pred_tokens = sample_logits.argmax(dim=-1)
+                            pred_text = enc.decode(pred_tokens[0].tolist())
+                            source_text = enc.decode(val_enc_sample[0].tolist())
+                            result = output_filter.filter(source_text, pred_text)
+                            if result.passed:
+                                filter_passes += 1
+                    filter_pass_rate = filter_passes / filter_total
+                    print(f"  -> Output filter pass rate: {filter_pass_rate*100:.1f}%", flush=True)
+                except Exception as e:
+                    pass
+
         if val_loss is None:
             print(
                 f"Step {step} | Loss: {loss.item():.6f} | Train non-pad: {train_non_pad}",
@@ -486,8 +499,6 @@ def train_seq2seq_loop(
                 steps_without_improvement += val_interval
                 if early_stopping_patience > 0:
                     print(f"  -> No improvement for {steps_without_improvement} steps (patience: {early_stopping_patience})", flush=True)
-
-            # Early stopping check
             if early_stopping_patience > 0 and steps_without_improvement >= early_stopping_patience:
                 print(f"\nEarly stopping triggered! No improvement for {steps_without_improvement} steps.", flush=True)
                 print(f"Best val loss: {best_val_loss:.6f} at step {last_best_step}", flush=True)
@@ -495,19 +506,39 @@ def train_seq2seq_loop(
                 return
         if step % save_interval == 0:
             torch.save(model.state_dict(), os.path.join(output_dir, f"model_{step:05d}.pt"))
+
+        if use_data_improvement and step > 0 and step % data_improvement_interval == 0:
+            print(f"\n--- Running data improvement at step {step} ---", flush=True)
+            try:
+                di_config = data_improvement_config or {}
+                current_train_path = Path(output_dir) / "train.jsonl"
+                improved_path = Path(output_dir) / "improved_train.jsonl"
+                improvement_cfg = ImprovementConfig(
+                    input_path=str(current_train_path),
+                    output_path=str(improved_path),
+                    num_candidates=di_config.get("num_candidates", 5),
+                    temperatures=di_config.get("temperatures", [0.6, 0.7, 0.8]),
+                )
+                stats = run_improvement_pipeline(improvement_cfg)
+                print(f"Data improvement: {stats['success']}/{stats['total']} samples improved ({stats['success']/max(1,stats['total'])*100:.1f}%)", flush=True)
+
+                if stats['success'] > 0 and improved_path.is_file():
+                    import shutil
+                    backup_path = Path(output_dir) / f"train_backup_step{step}.jsonl"
+                    shutil.copy(current_train_path, backup_path)
+                    shutil.move(improved_path, current_train_path)
+                    dataloader = build_seq2seq_dataloader(str(current_train_path), batch_size, seq_len)
+                    print(f"Swapped in improved data ({stats['success']} samples). Backup: {backup_path.name}", flush=True)
+            except Exception as e:
+                print(f"Data improvement failed: {e}", flush=True)
+            print("--- Data improvement complete ---\n", flush=True)
+
         step += 1
     torch.save(model.state_dict(), os.path.join(output_dir, "model_final.pt"))
     print(f"Model saved to {os.path.join(output_dir, 'model_final.pt')}")
 
 
 def main() -> None:
-    """
-    TODO:
-    - Load config.json from repo root.
-    - Load or init seq2seq model.
-    - Build dataloader from copy/replace pairs.
-    - Train and save checkpoints.
-    """
     config_path = Path(__file__).resolve().parents[3] / "config.json"
     with open(config_path, "r") as f:
         config = json.load(f)
@@ -524,7 +555,6 @@ def main() -> None:
                 print(f"Resuming seq2seq from: {resume_path}", flush=True)
                 if best_val_init is not None:
                     print(f"Loaded best val loss: {best_val_init:.6f}", flush=True)
-                # Load step from checkpoint dict or filename
                 loaded_step = load_seq2seq_step(resume_path)
                 if loaded_step is not None:
                     start_step = loaded_step
@@ -545,6 +575,21 @@ def main() -> None:
     if not val_pairs_path:
         val_pairs_path = str(Path(pairs_path).with_name("val.jsonl"))
     dataloader = build_seq2seq_dataloader(str(pairs_path), config["batch_size"], seq_len)
+
+    use_output_filter = config.get("use_output_filter", True)
+    output_filter_config = {
+        "min_length": config.get("output_filter_min_length", 5),
+        "max_length_ratio": config.get("output_filter_max_length_ratio", 2.0),
+        "check_grammar": config.get("output_filter_check_grammar", True),
+    }
+
+    use_data_improvement = config.get("use_data_improvement", False)
+    data_improvement_interval = int(config.get("data_improvement_interval", 5000))
+    data_improvement_config = {
+        "num_candidates": config.get("data_improvement_num_candidates", 5),
+        "temperatures": config.get("data_improvement_temperatures", [0.6, 0.7, 0.8]),
+    }
+
     train_seq2seq_loop(
         model,
         dataloader,
@@ -560,6 +605,11 @@ def main() -> None:
         learning_rate,
         start_step,
         early_stopping_patience,
+        use_output_filter,
+        output_filter_config,
+        use_data_improvement,
+        data_improvement_interval,
+        data_improvement_config,
     )
     print(f"Model saved to {os.path.join(config['seq2seq_output_dir'], 'model_final.pt')}")
 

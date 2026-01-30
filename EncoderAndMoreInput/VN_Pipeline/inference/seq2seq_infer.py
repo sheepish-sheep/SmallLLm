@@ -55,10 +55,11 @@ def generate_replacement(
     source_prefix: str,
     source_suffix: str,
     repetition_penalty: float = 1.2,
+    min_tokens_before_stop: int = 5,
 ) -> str:
     # No <hl> tags needed - we're doing full sentence replacement
     text = f"{source_prefix}{text}{source_suffix}"
-    source_tokens = enc.encode(text)
+    source_tokens = enc.encode(text, allowed_special={"<hl>", "</hl>"})
     if len(source_tokens) > model.config.block_size:
         source_tokens = source_tokens[-model.config.block_size:]
     enc_in = torch.tensor(source_tokens, dtype=torch.long, device=device).unsqueeze(0)
@@ -69,7 +70,7 @@ def generate_replacement(
 
     model.eval()
     with torch.no_grad():
-        for _ in range(max_len):
+        for step in range(max_len):
             dec_in = torch.tensor(dec_tokens, dtype=torch.long, device=device).unsqueeze(0)
             logits, _ = model(enc_in, dec_in)
             logits = logits[:, -1, :]
@@ -94,6 +95,14 @@ def generate_replacement(
             dec_tokens.append(next_token)
             if next_token == eos_id:
                 break
+
+            # Early stopping: check for sentence-ending punctuation
+            # Only after generating enough tokens to form a reasonable output
+            if step >= min_tokens_before_stop:
+                decoded_so_far = enc.decode(dec_tokens[1:])
+                # Stop if we hit sentence-ending punctuation followed by space or end
+                if decoded_so_far.rstrip().endswith(('.', '!', '?')):
+                    break
 
     decoded = enc.decode(dec_tokens[1:])  # drop BOS
     return decoded.strip()
@@ -150,13 +159,14 @@ class Seq2SeqRewriter:
         max_len = int(self.config.get("seq2seq_max_gen_len", 128))
         temperature = float(self.config.get("seq2seq_temperature", 0.8))
         top_k = int(self.config.get("seq2seq_top_k", 50))
-        # No <hl> tags - full sentence replacement
-        source_for_len = f"{self.source_prefix}{text}{self.source_suffix}"
-        source_tokens = self.enc.encode(source_for_len)
+        # Wrap with <hl> tags to match training data format
+        wrapped_text = f"<hl>{text}</hl>"
+        source_for_len = f"{self.source_prefix}{wrapped_text}{self.source_suffix}"
+        source_tokens = self.enc.encode(source_for_len, allowed_special={"<hl>", "</hl>"})
         capped_len = max(self.min_gen_len, int(len(source_tokens) * self.len_ratio))
         max_len = min(max_len, capped_len)
         return generate_replacement(
-            text,
+            wrapped_text,
             self.model,
             self.enc,
             max_len,
